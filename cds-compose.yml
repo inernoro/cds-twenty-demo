@@ -111,6 +111,7 @@ services:
       cds.path-prefix: "/"
       cds.readiness-path: "/healthz"
       cds.entrypoint: ""  # Phase 7 B10: 清空 image entrypoint 自带的 wrapper(它跑 psql 在 db ready 前抢跑),直接走我们的 sh -c
+      cds.prebuilt-image: "true"  # Phase 7 B17: 不挂源码到 /app(不覆盖 image 自带文件)
 
   worker:
     image: twentycrm/twenty:latest
@@ -139,6 +140,7 @@ services:
     labels:
       cds.path-prefix: "/__internal_worker__/"  # worker 不对外,占位前缀
       cds.no-http-readiness: "true"  # Phase 7 B11: worker 不监听 HTTP,跳过 HTTP probe
+      cds.prebuilt-image: "true"  # Phase 7 B17: 同 server,不挂源码
 
 # ── 命名 volumes ──
 # CDS 自动管理这些 named volume 的生命周期
