@@ -137,6 +137,7 @@ services:
       - server  # worker 等 server 起来再起(server 跑完 migration)
     labels:
       cds.path-prefix: "/__internal_worker__/"  # worker 不对外,占位前缀
+      cds.no-http-readiness: "true"  # Phase 7 B11: worker 不监听 HTTP,跳过 HTTP probe
 
 # ── 命名 volumes ──
 # CDS 自动管理这些 named volume 的生命周期
