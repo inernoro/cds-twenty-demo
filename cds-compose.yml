@@ -91,7 +91,7 @@ services:
       - "server-local-data:/app/packages/twenty-server/.local-storage"
     ports:
       - "3000"
-    command: bash -c "until nc -z db 5432; do sleep 1; done && until nc -z redis 6379; do sleep 1; done && yarn server:prod"
+    command: sh -c "until nc -z db 5432 2>/dev/null; do echo waiting db; sleep 2; done && until nc -z redis 6379 2>/dev/null; do echo waiting redis; sleep 2; done && exec node packages/twenty-server/dist/src/main"
     environment:
       NODE_PORT: "3000"
       PG_DATABASE_URL: "${PG_DATABASE_URL}"
@@ -119,7 +119,7 @@ services:
       - "server-local-data:/app/packages/twenty-server/.local-storage"
     ports:
       - "3001"  # worker 不对外服务,但 CDS 要求 ports 段非空
-    command: bash -c "until nc -z db 5432; do sleep 1; done && until nc -z redis 6379; do sleep 1; done && yarn worker:prod"
+    command: sh -c "until nc -z db 5432 2>/dev/null; do echo waiting db; sleep 2; done && until nc -z redis 6379 2>/dev/null; do echo waiting redis; sleep 2; done && exec node packages/twenty-server/dist/src/queue-worker"
     environment:
       PG_DATABASE_URL: "${PG_DATABASE_URL}"
       SERVER_URL: "${SERVER_URL}"
