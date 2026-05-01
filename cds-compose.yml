@@ -1,0 +1,142 @@
+# CDS Compose 配置 — Twenty CRM(twentyhq/twenty)
+# 由 cdscli scan 自动生成 + AI 手补 30%(Phase 6 实战发现的 cdscli 真盲区)
+#
+# 实战暴露的 cdscli bug(已立 Phase 7 backlog,见 plan):
+#   B1: cdscli 把 infra service 'db' rename 成模板默认名 'postgres',但不改
+#       消费它的 service 内部引用(server.env 里 ${PG_DATABASE_HOST:-db})。
+#       手补:保留 service 名 'db',与 Twenty 原 docker-compose 一致
+#   B2: cdscli 默认假设"应用 service = build context + 相对 mount"。Twenty
+#       用预构建镜像 twentycrm/twenty:latest + named volume,CDS parser 会
+#       误判为 infra → 应用部署逻辑不跑。
+#       手补:server / worker 加 './packages/twenty-server:/app/cds-marker'
+#       作为 CDS app 识别 marker(挂到 image 不读取的路径,无害)
+#   B3: cdscli 自动追加了 db + postgres 两个 depends_on(原 yaml 只有 db),
+#       手补删 postgres,只留 db
+#
+# 环境变量很多 — 但 SERVER_URL / STORAGE_TYPE / OAuth 等用户在 CDS Dashboard
+# 项目环境变量页面手填即可。Twenty 大部分 env 都有默认值,本地最小启动只需
+# 填:SERVER_URL(必填,如 http://localhost:3000 或 CDS 预览域名)
+
+x-cds-project:
+  name: twenty
+  description: "Twenty CRM — 开源 Salesforce 替代,Phase 6 实战项目"
+
+# 项目级共享变量 — CDS 注入到所有容器(基础设施 + 应用),通过 ${VAR} 引用
+# 密码字段由 cdscli 自动随机生成,可在 Dashboard 修改
+x-cds-env:
+  # PostgreSQL(Twenty 用 db 服务名)
+  PG_DATABASE_USER: "postgres"
+  PG_DATABASE_PASSWORD: "VsmV6CyOkL3rMfnNqxEqwQ"
+  PG_DATABASE_NAME: "default"
+  PG_DATABASE_HOST: "db"
+  PG_DATABASE_PORT: "5432"
+  # 应用侧连接串(server / worker 用)
+  PG_DATABASE_URL: "postgres://${PG_DATABASE_USER}:${PG_DATABASE_PASSWORD}@${PG_DATABASE_HOST}:${PG_DATABASE_PORT}/${PG_DATABASE_NAME}"
+
+  # Redis
+  REDIS_URL: "redis://redis:6379"
+
+  # Twenty 应用必填项
+  APP_SECRET: "Ph6ContractTestRandomSecretChange"
+  # SERVER_URL 必填!CDS 预览域名,部署后 Dashboard 手改:
+  #   https://<branch-tail>-<prefix>-twenty.miduo.org
+  SERVER_URL: "TODO_FILL_PREVIEW_URL"
+
+  # 可选:存储后端(留 local,首次跑不需要 S3)
+  STORAGE_TYPE: "local"
+  STORAGE_S3_REGION: ""
+  STORAGE_S3_NAME: ""
+  STORAGE_S3_ENDPOINT: ""
+
+  # 可选:Twenty 的运行模式开关
+  DISABLE_DB_MIGRATIONS: ""
+  DISABLE_CRON_JOBS_REGISTRATION: ""
+
+services:
+  # ── 基础设施 ──
+  db:
+    image: postgres:16
+    ports:
+      - "5432"
+    environment:
+      POSTGRES_USER: "${PG_DATABASE_USER}"
+      POSTGRES_PASSWORD: "${PG_DATABASE_PASSWORD}"
+      POSTGRES_DB: "${PG_DATABASE_NAME}"
+    volumes:
+      - "db-data:/var/lib/postgresql/data"
+    healthcheck:
+      test: pg_isready -U postgres -h localhost -d postgres
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── 应用 ──
+  # NOTE: server / worker 都用 Twenty 预构建镜像 twentycrm/twenty:latest。
+  # cds-marker 相对路径挂载是 CDS app 识别 marker(image 内不读取该路径)。
+  server:
+    image: twentycrm/twenty:latest
+    working_dir: /app/packages/twenty-server
+    volumes:
+      - "./:/app/cds-marker"  # CDS app marker(挂仓库根,image 不读这个路径,无害)
+      - "server-local-data:/app/packages/twenty-server/.local-storage"
+    ports:
+      - "3000"
+    command: bash -c "until nc -z db 5432; do sleep 1; done && until nc -z redis 6379; do sleep 1; done && yarn server:prod"
+    environment:
+      NODE_PORT: "3000"
+      PG_DATABASE_URL: "${PG_DATABASE_URL}"
+      SERVER_URL: "${SERVER_URL}"
+      REDIS_URL: "${REDIS_URL}"
+      DISABLE_DB_MIGRATIONS: "${DISABLE_DB_MIGRATIONS}"
+      DISABLE_CRON_JOBS_REGISTRATION: "${DISABLE_CRON_JOBS_REGISTRATION}"
+      STORAGE_TYPE: "${STORAGE_TYPE}"
+      STORAGE_S3_REGION: "${STORAGE_S3_REGION}"
+      STORAGE_S3_NAME: "${STORAGE_S3_NAME}"
+      STORAGE_S3_ENDPOINT: "${STORAGE_S3_ENDPOINT}"
+      APP_SECRET: "${APP_SECRET}"
+    depends_on:
+      - db
+      - redis
+    labels:
+      cds.path-prefix: "/"
+      cds.readiness-path: "/healthz"
+
+  worker:
+    image: twentycrm/twenty:latest
+    working_dir: /app/packages/twenty-server
+    volumes:
+      - "./packages/twenty-server:/app/cds-marker"  # 同 server,marker only
+      - "server-local-data:/app/packages/twenty-server/.local-storage"
+    ports:
+      - "3001"  # worker 不对外服务,但 CDS 要求 ports 段非空
+    command: bash -c "until nc -z db 5432; do sleep 1; done && until nc -z redis 6379; do sleep 1; done && yarn worker:prod"
+    environment:
+      PG_DATABASE_URL: "${PG_DATABASE_URL}"
+      SERVER_URL: "${SERVER_URL}"
+      REDIS_URL: "${REDIS_URL}"
+      DISABLE_DB_MIGRATIONS: "true"
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+      STORAGE_TYPE: "${STORAGE_TYPE}"
+      STORAGE_S3_REGION: "${STORAGE_S3_REGION}"
+      STORAGE_S3_NAME: "${STORAGE_S3_NAME}"
+      STORAGE_S3_ENDPOINT: "${STORAGE_S3_ENDPOINT}"
+      APP_SECRET: "${APP_SECRET}"
+    depends_on:
+      - db
+      - redis
+      - server  # worker 等 server 起来再起(server 跑完 migration)
+    labels:
+      cds.path-prefix: "/__internal_worker__/"  # worker 不对外,占位前缀
+
+# ── 命名 volumes ──
+# CDS 自动管理这些 named volume 的生命周期
