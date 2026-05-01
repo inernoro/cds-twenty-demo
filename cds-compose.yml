@@ -110,6 +110,7 @@ services:
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/healthz"
+      cds.entrypoint: ""  # Phase 7 B10: 清空 image entrypoint 自带的 wrapper(它跑 psql 在 db ready 前抢跑),直接走我们的 sh -c
 
   worker:
     image: twentycrm/twenty:latest
